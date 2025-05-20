@@ -10,6 +10,7 @@ import torch.nn as nn
 import importlib.util
 import sys
 import traceback
+import pandas as pd
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
