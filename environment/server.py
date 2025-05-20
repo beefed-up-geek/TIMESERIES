@@ -161,17 +161,26 @@ def handle_client(conn, addr):
             model_save_path = base_filename + ".pth"
             torch.save(model.state_dict(), model_save_path)
 
-        # 최종 성능 평가
         final_metrics = evaluate(model, test_loader, device)
 
-        # 평가결과 및 에폭별 loss 기록을 csv로 저장
+        # 최종 메트릭 DataFrame 생성
         metrics_df = pd.DataFrame([final_metrics], columns=['MAE', 'MSE', 'RMSE', 'MAPE', 'MSPE'])
-        loss_df = pd.DataFrame(epoch_losses, columns=['Epoch_Loss'])
-        
-        # 최종 평가 결과와 학습 로그 결합
-        combined_df = pd.concat([metrics_df, loss_df], axis=1)
+
+        # Epoch별 loss 기록 DataFrame 생성
+        epoch_df = pd.DataFrame({
+            'Epoch': list(range(1, len(epoch_losses) + 1)),
+            'Epoch_Loss': epoch_losses
+        })
+
+        # 최종 결과와 Epoch별 loss를 분리하여 저장
         csv_save_path = base_filename + ".csv"
-        combined_df.to_csv(csv_save_path, index=False)
+
+        with open(csv_save_path, 'w') as f:
+            # 최종 성능 메트릭 저장
+            metrics_df.to_csv(f, index=False)
+            f.write('\n')  # 빈 줄 추가
+            # Epoch별 loss 기록 저장
+            epoch_df.to_csv(f, index=False)
 
         conn.sendall(pickle.dumps({'status': 'finished', 'metrics': final_metrics}))
 
@@ -185,7 +194,8 @@ def handle_client(conn, addr):
         with conn_lock:
             active_connections -= 1
             print(f"[ACTIVE CONNECTIONS] {active_connections}")
-         
+
+
 if __name__ == "__main__":
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.bind((HOST, PORT))
