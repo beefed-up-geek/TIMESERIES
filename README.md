@@ -41,7 +41,7 @@ TIMESERIES/
 ```bash
 pip install -r requirements.txt
 ```
-
+이후 추가로 본인의 환경에 맞는 torch==2.2.2 버전을 설치해주세요!
 ### 데이터셋 다운로드
 
 [구글 드라이브 링크](https://drive.google.com/drive/folders/15EHw24-SYDUMglJ54V-va_RpQxFUUcN6?usp=drive_link)에 접속하여 모든 데이터를 다운받은 후, 프로젝트의 `dataset` 폴더에 저장합니다.
