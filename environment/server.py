@@ -113,15 +113,30 @@ def handle_client(conn, addr):
         model_path = os.path.join('./models', model_file if model_file.endswith('.py') else model_file+'.py')
         model = dynamic_model_loader(model_path, seq_len, pred_len, data_dim).to(device)
 
+        # 파일명 구성
+        timestamp = datetime.datetime.now().strftime('%m%d%H%M')
+        base_filename = f"{timestamp}_{task}_{dataset}_{os.path.splitext(model_file)[0]}"
+
         if pretrained:
             model.load_state_dict(torch.load(pretrained, map_location=device))
-
         else:
             train(model, train_loader, config, epochs, device, conn)
-            model_save_path = datetime.datetime.now().strftime('%m%d%H%M') + ".pth"
+
+            # 여기서 EarlyStopping에 저장된 체크포인트를 불러와서 저장
+            model.load_state_dict(torch.load('./checkpoint', map_location=device))
+            
+            # 지정된 이름으로 최종 모델 저장
+            model_save_path = base_filename + ".pth"
             torch.save(model.state_dict(), model_save_path)
 
+        # 평가 및 메트릭 저장
         final_metrics = evaluate(model, test_loader, device)
+
+        # 최종 메트릭 CSV 저장
+        metrics_df = pd.DataFrame([final_metrics], columns=['MAE', 'MSE', 'RMSE', 'MAPE', 'MSPE'])
+        csv_save_path = base_filename + ".csv"
+        metrics_df.to_csv(csv_save_path, index=False)
+
         conn.sendall(pickle.dumps({'status': 'finished', 'metrics': final_metrics}))
 
     except Exception as e:
@@ -134,7 +149,7 @@ def handle_client(conn, addr):
         with conn_lock:
             active_connections -= 1
             print(f"[ACTIVE CONNECTIONS] {active_connections}")
-
+            
 if __name__ == "__main__":
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.bind((HOST, PORT))
