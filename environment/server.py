@@ -92,6 +92,8 @@ def handle_client(conn, addr):
         active_connections += 1
         print(f"[ACTIVE CONNECTIONS] {active_connections}")
 
+    epoch_losses = []  # 에폭별 loss 저장용 리스트 추가
+
     try:
         data = b""
         while True:
@@ -114,29 +116,62 @@ def handle_client(conn, addr):
         model_path = os.path.join('./models', model_file if model_file.endswith('.py') else model_file+'.py')
         model = dynamic_model_loader(model_path, seq_len, pred_len, data_dim).to(device)
 
-        # 파일명 구성
         timestamp = datetime.datetime.now().strftime('%m%d%H%M')
         base_filename = f"{timestamp}_{task}_{dataset}_{os.path.splitext(model_file)[0]}"
 
         if pretrained:
             model.load_state_dict(torch.load(pretrained, map_location=device))
         else:
-            train(model, train_loader, config, epochs, device, conn)
+            criterion = nn.MSELoss()
+            optimizer = config['optimizer'](model.parameters(), lr=config['learning_rate'])
+            scheduler = config['scheduler'](optimizer, T_max=epochs)
+            early_stopping = EarlyStopping(patience=config['patience'], verbose=False, save_mode=False)
 
-            # 여기서 EarlyStopping에 저장된 체크포인트를 불러와서 저장
-            model.load_state_dict(torch.load('./checkpoint', map_location=device))
-            
-            # 지정된 이름으로 최종 모델 저장
+            model.train()
+            for epoch in range(1, epochs + 1):
+                epoch_loss = 0
+                for batch_x, batch_y, _, _ in train_loader:
+                    batch_x, batch_y = batch_x.float().to(device), batch_y.float().to(device)
+                    optimizer.zero_grad()
+                    output = model(batch_x)
+                    loss = criterion(output, batch_y[:, -output.shape[1]:, :])
+                    loss.backward()
+                    optimizer.step()
+                    epoch_loss += loss.item()
+
+                epoch_loss /= len(train_loader)
+                epoch_losses.append(epoch_loss)  # loss 기록
+                scheduler.step()
+
+                epoch_log = {
+                    'status': 'training',
+                    'epoch': epoch,
+                    'total_epochs': epochs,
+                    'loss': epoch_loss
+                }
+                conn.sendall(pickle.dumps(epoch_log))
+
+                early_stopping(epoch_loss, model, './')
+
+                if early_stopping.early_stop:
+                    conn.sendall(pickle.dumps({'status': 'early_stopping', 'epoch': epoch}))
+                    break
+
+            # 학습 완료 후 최종 모델 저장
             model_save_path = base_filename + ".pth"
             torch.save(model.state_dict(), model_save_path)
 
-        # 평가 및 메트릭 저장
+        # 최종 성능 평가
         final_metrics = evaluate(model, test_loader, device)
 
-        # 최종 메트릭 CSV 저장
+        # 평가결과 및 에폭별 loss 기록을 csv로 저장
         metrics_df = pd.DataFrame([final_metrics], columns=['MAE', 'MSE', 'RMSE', 'MAPE', 'MSPE'])
+        loss_df = pd.DataFrame(epoch_losses, columns=['Epoch_Loss'])
+        
+        # 최종 평가 결과와 학습 로그 결합
+        combined_df = pd.concat([metrics_df, loss_df], axis=1)
         csv_save_path = base_filename + ".csv"
-        metrics_df.to_csv(csv_save_path, index=False)
+        combined_df.to_csv(csv_save_path, index=False)
 
         conn.sendall(pickle.dumps({'status': 'finished', 'metrics': final_metrics}))
 
@@ -150,7 +185,7 @@ def handle_client(conn, addr):
         with conn_lock:
             active_connections -= 1
             print(f"[ACTIVE CONNECTIONS] {active_connections}")
-            
+         
 if __name__ == "__main__":
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.bind((HOST, PORT))
